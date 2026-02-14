@@ -5,9 +5,11 @@ import {
   getTodayTotal, 
   getMonthlyTotal, 
   getInstallmentsSummary,
-  addExpense,
   getExpenses,
+  getMonthlyExpenses,
   deleteExpense,
+  deleteCreditCard,
+  payInstallment,
   formatCurrency,
   getCreditCards,
   addCreditCard,
@@ -15,6 +17,8 @@ import {
   setDailyTarget
 } from "../utils/expenseUtils";
 import AddExpense from "../screens/AddExpense";
+import WeeklySummary from "./WeeklySummary";
+import InstallmentsView from "./InstallmentsView";
 import "./ExpenseTracker.css";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
@@ -23,11 +27,17 @@ const ExpenseTracker = ({ uid }) => {
   const [activeView, setActiveView] = useState("home");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]); // Track selected date
   const [currentMonth, setCurrentMonth] = useState(new Date()); // For calendar navigation
-  const [calendarOpen, setCalendarOpen] = useState(true); // Show calendar by default
+  const [inlineCalendarOpen, setInlineCalendarOpen] = useState(false); // Inline popup near header
+  const [expenseFormOpen, setExpenseFormOpen] = useState(false); // Inline expense form popup
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [prefillPayment, setPrefillPayment] = useState(null);
+  const [pendingDeleteExpense, setPendingDeleteExpense] = useState(null);
   const [todayData, setTodayData] = useState({ dailyTotal: 0, otherTotal: 0, total: 0 });
   const [monthlyData, setMonthlyData] = useState({ total: 0, byCategory: {}, byType: {} });
   const [installmentsData, setInstallmentsData] = useState({ pending: [], overdue: [], totalPending: 0, totalOverdue: 0 });
   const [todayExpenses, setTodayExpenses] = useState([]);
+  const [monthlyExpenses, setMonthlyExpenses] = useState([]);
+  const [allExpenses, setAllExpenses] = useState([]);
   const [creditCards, setCreditCards] = useState([]);
   const [dailyTarget, setDailyTargetState] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -35,11 +45,18 @@ const ExpenseTracker = ({ uid }) => {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [today, monthly, installments, expenses, cards, target] = await Promise.all([
+      // Derive year and monthIndex from the selected date so monthly queries reflect selection
+      const [selYearStr, selMonthStr] = (selectedDate || new Date().toISOString().split('T')[0]).split('-');
+      const selYear = parseInt(selYearStr, 10);
+      const selMonthIndex = parseInt(selMonthStr, 10) - 1; // 0-based month index
+
+      const [today, monthly, installments, expenses, monthlyExpensesData, allExpensesData, cards, target] = await Promise.all([
         getTodayTotal(uid, selectedDate),
-        getMonthlyTotal(uid),
+        getMonthlyTotal(uid, selYear, selMonthIndex),
         getInstallmentsSummary(uid),
         getExpenses(uid, selectedDate),
+        getMonthlyExpenses(uid, selYear, selMonthIndex),
+        getExpenses(uid), // fetch all expenses, no date filter
         getCreditCards(uid),
         getDailyTarget(uid, selectedDate)
       ]);
@@ -48,6 +65,8 @@ const ExpenseTracker = ({ uid }) => {
       setMonthlyData(monthly);
       setInstallmentsData(installments);
       setTodayExpenses(expenses);
+      setMonthlyExpenses(monthlyExpensesData);
+      setAllExpenses(allExpensesData);
       setCreditCards(cards);
       setDailyTargetState(target);
     } catch (error) {
@@ -64,12 +83,37 @@ const ExpenseTracker = ({ uid }) => {
   }, [uid, loadData]);
 
   const handleDeleteExpense = async (expenseId) => {
+    if (!expenseId) {
+      alert('Unable to delete: missing expense id');
+      setPendingDeleteExpense(null);
+      return;
+    }
+
     try {
       await deleteExpense(uid, expenseId);
+      setPendingDeleteExpense(null);
+      setEditingExpense(null); // Clear editing state
+      setExpenseFormOpen(false); // Close form if open
       await loadData();
     } catch (error) {
       console.error("Error deleting expense:", error);
+      alert('Failed to delete expense: ' + (error.message || error));
     }
+  };
+
+  const requestDeleteExpense = (expense) => {
+    if (!expense) {
+      setPendingDeleteExpense(null);
+      return;
+    }
+    setPendingDeleteExpense(expense);
+  };
+
+  const cancelDelete = () => setPendingDeleteExpense(null);
+
+  const handleEditExpense = (expense) => {
+    setEditingExpense(expense);
+    setExpenseFormOpen(true);
   };
 
   const handleSetDailyTarget = async () => {
@@ -81,6 +125,19 @@ const ExpenseTracker = ({ uid }) => {
       } catch (error) {
         console.error("Error setting daily target:", error);
       }
+    }
+  };
+
+  const handleMarkInstallmentPaid = async (expenseId, amount) => {
+    if (!expenseId) return;
+    const ok = window.confirm('Mark next installment as paid for this plan?');
+    if (!ok) return;
+    try {
+      await payInstallment(uid, expenseId, { amount, date: new Date().toISOString().split('T')[0], note: 'Installment payment' });
+      await loadData();
+    } catch (err) {
+      console.error('Error marking installment paid:', err);
+      alert('Failed to mark installment paid: ' + (err.message || err));
     }
   };
 
@@ -102,6 +159,31 @@ const ExpenseTracker = ({ uid }) => {
       } catch (error) {
         console.error("Error adding credit card:", error);
       }
+    }
+  };
+
+  const openAddCardPayment = async (cardId = null) => {
+    // Refresh data to ensure installmentPlans are up-to-date before opening the payment form
+    try {
+      await loadData();
+    } catch (err) {
+      console.error('Failed to refresh data before opening Add Card Payment', err);
+    }
+    setPrefillPayment({ cardId: cardId || '' });
+    setEditingExpense(null);
+    setExpenseFormOpen(true);
+  };
+
+  const handleDeleteCreditCard = async (cardDocId) => {
+    if (!cardDocId) return;
+    const ok = window.confirm('Delete this credit card? This will not delete existing installments.');
+    if (!ok) return;
+    try {
+      await deleteCreditCard(uid, cardDocId);
+      await loadData();
+    } catch (err) {
+      console.error('Failed to delete credit card', err);
+      alert('Failed to delete credit card: ' + (err.message || err));
     }
   };
 
@@ -162,6 +244,65 @@ const ExpenseTracker = ({ uid }) => {
     }
   };
 
+  // Weekly data grouping functions
+  const getWeekKey = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
+    const monday = new Date(d.setDate(diff));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    
+    return {
+      key: monday.toISOString().split('T')[0],
+      start: monday.toISOString().split('T')[0],
+      end: sunday.toISOString().split('T')[0],
+      label: `${monday.toLocaleDateString('default', { month: 'short', day: 'numeric' })} – ${sunday.toLocaleDateString('default', { month: 'short', day: 'numeric' })}`
+    };
+  };
+
+  const groupExpensesByWeek = (expenses) => {
+    const weeks = {};
+    
+    expenses.forEach(expense => {
+      const weekInfo = getWeekKey(expense.date);
+      const weekKey = weekInfo.key;
+      
+      if (!weeks[weekKey]) {
+        weeks[weekKey] = {
+          ...weekInfo,
+          total: 0,
+          days: {}
+        };
+      }
+      
+      weeks[weekKey].total += expense.amount;
+      
+      // Group by day within the week
+      const dayKey = expense.date;
+      if (!weeks[weekKey].days[dayKey]) {
+        weeks[weekKey].days[dayKey] = {
+          date: expense.date,
+          total: 0,
+          expenses: []
+        };
+      }
+      
+      weeks[weekKey].days[dayKey].total += expense.amount;
+      weeks[weekKey].days[dayKey].expenses.push(expense);
+    });
+    
+    // Sort weeks by date (newest first) and days within weeks
+    return Object.keys(weeks)
+      .sort((a, b) => new Date(b) - new Date(a))
+      .map(weekKey => ({
+        ...weeks[weekKey],
+        days: Object.keys(weeks[weekKey].days)
+          .sort((a, b) => new Date(b) - new Date(a))
+          .map(dayKey => weeks[weekKey].days[dayKey])
+      }));
+  };
+
 
   // Calendar helper function
   const getDaysInMonth = (date) => {
@@ -182,8 +323,16 @@ const ExpenseTracker = ({ uid }) => {
 
   const handleDateSelect = (day) => {
     const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const today = new Date().toISOString().split("T")[0];
+    
+    // Prevent selecting future dates
+    if (dateStr > today) {
+      return;
+    }
+    
     setSelectedDate(dateStr);
-    setActiveView("addExpense"); // Navigate to add expense screen
+    setInlineCalendarOpen(false); // Close calendar after selection
+    // Stay on home screen to view expenses for selected date
   };
 
   const renderCalendar = () => {
@@ -197,14 +346,17 @@ const ExpenseTracker = ({ uid }) => {
     }
     
     // Days of the month
+    const today = new Date().toISOString().split("T")[0];
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const isSelected = dateStr === selectedDate;
+      const isFuture = dateStr > today;
       days.push(
         <button
           key={day}
-          className={`calendar-day ${isSelected ? 'selected' : ''}`}
+          className={`calendar-day ${isSelected ? 'selected' : ''} ${isFuture ? 'future' : ''}`}
           onClick={() => handleDateSelect(day)}
+          disabled={isFuture}
         >
           {day}
         </button>
@@ -218,7 +370,43 @@ const ExpenseTracker = ({ uid }) => {
     <div className="home-view">
       {/* Selected Date Info */}
       <div className="selected-date-banner">
-        <h3>Selected Date: {new Date(selectedDate).toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3>
+        <div className="selected-date-content">
+          <h3>Selected Date: {new Date(selectedDate).toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3>
+          <div className="selected-date-actions">
+            <button
+              className="calendar-icon-btn"
+              onClick={() => { setInlineCalendarOpen(!inlineCalendarOpen); }}
+              aria-label={inlineCalendarOpen ? 'Hide calendar' : 'Show calendar'}
+              title={inlineCalendarOpen ? 'Hide calendar' : 'Show calendar'}
+            >
+              📅
+            </button>
+            {inlineCalendarOpen && (
+              <>
+                <div className="calendar-overlay" onClick={() => setInlineCalendarOpen(false)}></div>
+                <div className="inline-calendar-popup">
+                  <div className="calendar-header">
+                    <button onClick={handlePrevMonth} className="calendar-nav">←</button>
+                    <h3>{currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
+                    <button onClick={handleNextMonth} className="calendar-nav">→</button>
+                  </div>
+                  <div className="calendar-weekdays">
+                    <div>Sun</div>
+                    <div>Mon</div>
+                    <div>Tue</div>
+                    <div>Wed</div>
+                    <div>Thu</div>
+                    <div>Fri</div>
+                    <div>Sat</div>
+                  </div>
+                  <div className="calendar-days inline-days">
+                    {renderCalendar()}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Today's Summary */}
@@ -226,7 +414,8 @@ const ExpenseTracker = ({ uid }) => {
         <div className="section-header">
           <h2>Overview</h2>
           <div className="action-buttons">
-            <button onClick={() => setActiveView("addExpense")} className="btn-primary">Add Expense</button>
+            <button onClick={() => setExpenseFormOpen(true)} className="btn-primary">Add Expense</button>
+            <button onClick={() => openAddCardPayment()} className="btn-secondary">Add Card Payment</button>
             <button onClick={handleSetDailyTarget} className="btn-secondary">Set Target</button>
           </div>
         </div>
@@ -235,8 +424,8 @@ const ExpenseTracker = ({ uid }) => {
           {dailyTarget && (
             <div className="target-info">
               <span>Target: {formatCurrency(dailyTarget.amount)}</span>
-              <span className={todayData.total > dailyTarget.amount ? "over-target" : "under-target"}>
-                {todayData.total > dailyTarget.amount ? "Over" : "Under"} by {formatCurrency(Math.abs(todayData.total - dailyTarget.amount))}
+              <span className={todayData.dailyTotal > dailyTarget.amount ? "over-target" : "under-target"}>
+                {todayData.dailyTotal > dailyTarget.amount ? "Over" : "Under"} by {formatCurrency(Math.abs(todayData.dailyTotal - dailyTarget.amount))}
               </span>
             </div>
           )}
@@ -254,10 +443,10 @@ const ExpenseTracker = ({ uid }) => {
           ) : (
             <div className="expenses-list-compact">
               {/* Daily Expenses */}
-              {todayExpenses.filter(exp => exp.type === "daily").length > 0 && (
+              {todayExpenses.filter(exp => exp.type === "daily" && !(exp.creditData && exp.creditData.isInstallment)).length > 0 && (
                 <>
                   <div className="expense-type-header">Daily</div>
-                  {todayExpenses.filter(exp => exp.type === "daily").slice(0, 5).map(expense => (
+                  {todayExpenses.filter(exp => exp.type === "daily" && !(exp.creditData && exp.creditData.isInstallment)).slice(0, 5).map(expense => (
                     <div key={expense.id} className="expense-item-compact">
                       <div className="expense-details-compact">
                         <span className="amount">{formatCurrency(expense.amount)}</span>
@@ -265,25 +454,35 @@ const ExpenseTracker = ({ uid }) => {
                         <span className="payment">{expense.paymentType}</span>
                         {expense.note && <span className="note">{expense.note}</span>}
                       </div>
-                      <button 
-                        onClick={() => handleDeleteExpense(expense.id)}
-                        className="btn-delete-small"
-                      >
-                        ×
-                      </button>
+                      <div className="expense-actions">
+                        <button 
+                          onClick={() => handleEditExpense(expense)}
+                          className="btn-edit-small"
+                          title="Edit"
+                        >
+                          ✎
+                        </button>
+                        <button 
+                          onClick={() => requestDeleteExpense(expense)}
+                          className="btn-delete-small"
+                          title="Delete"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
                   ))}
-                  {todayExpenses.filter(exp => exp.type === "daily").length > 5 && (
-                    <p className="more-expenses">+{todayExpenses.filter(exp => exp.type === "daily").length - 5} more daily expenses</p>
+                  {todayExpenses.filter(exp => exp.type === "daily" && !(exp.creditData && exp.creditData.isInstallment)).length > 5 && (
+                    <p className="more-expenses">+{todayExpenses.filter(exp => exp.type === "daily" && !(exp.creditData && exp.creditData.isInstallment)).length - 5} more daily expenses</p>
                   )}
                 </>
               )}
               
               {/* Other Expenses */}
-              {todayExpenses.filter(exp => exp.type === "other").length > 0 && (
+              {todayExpenses.filter(exp => exp.type === "other" && !(exp.creditData && exp.creditData.isInstallment)).length > 0 && (
                 <>
                   <div className="expense-type-header">Other</div>
-                  {todayExpenses.filter(exp => exp.type === "other").slice(0, 5).map(expense => (
+                  {todayExpenses.filter(exp => exp.type === "other" && !(exp.creditData && exp.creditData.isInstallment)).slice(0, 5).map(expense => (
                     <div key={expense.id} className="expense-item-compact">
                       <div className="expense-details-compact">
                         <span className="amount">{formatCurrency(expense.amount)}</span>
@@ -291,16 +490,26 @@ const ExpenseTracker = ({ uid }) => {
                         <span className="payment">{expense.paymentType}</span>
                         {expense.note && <span className="note">{expense.note}</span>}
                       </div>
-                      <button 
-                        onClick={() => handleDeleteExpense(expense.id)}
-                        className="btn-delete-small"
-                      >
-                        ×
-                      </button>
+                      <div className="expense-actions">
+                        <button 
+                          onClick={() => handleEditExpense(expense)}
+                          className="btn-edit-small"
+                          title="Edit"
+                        >
+                          ✎
+                        </button>
+                        <button 
+                          onClick={() => requestDeleteExpense(expense)}
+                          className="btn-delete-small"
+                          title="Delete"
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
                   ))}
-                  {todayExpenses.filter(exp => exp.type === "other").length > 5 && (
-                    <p className="more-expenses">+{todayExpenses.filter(exp => exp.type === "other").length - 5} more other expenses</p>
+                  {todayExpenses.filter(exp => exp.type === "other" && !(exp.creditData && exp.creditData.isInstallment)).length > 5 && (
+                    <p className="more-expenses">+{todayExpenses.filter(exp => exp.type === "other" && !(exp.creditData && exp.creditData.isInstallment)).length - 5} more other expenses</p>
                   )}
                 </>
               )}
@@ -341,156 +550,85 @@ const ExpenseTracker = ({ uid }) => {
             </div>
           </div>
         </div>
+
+        {/* Weekly Summary with Expandable Daily Details */}
+        <WeeklySummary 
+          weeklyData={groupExpensesByWeek(monthlyExpenses.filter(exp => !(exp.creditData && exp.creditData.isInstallment)))} 
+          onDeleteExpense={requestDeleteExpense}
+          onEditExpense={handleEditExpense}
+        />
       </div>
-    </div>
-  );
-
-
-
-
-  // Group installments by payment (using note field from related expense)
-  const groupInstallmentsByPayment = (installments, allExpenses) => {
-    const expenseMap = {};
-    allExpenses.forEach(exp => {
-      expenseMap[exp.id] = exp;
-    });
-    const grouped = {};
-    installments.forEach(inst => {
-      const exp = expenseMap[inst.expenseId];
-      const paymentFor = exp && exp.note ? exp.note : "Other";
-      if (!grouped[paymentFor]) grouped[paymentFor] = [];
-      grouped[paymentFor].push({ ...inst, expense: exp });
-    });
-    return grouped;
-  };
-
-  const renderInstallmentsView = () => {
-    // Use all monthlyData.expenses to get notes for grouping
-    const allExpenses = monthlyData.expenses || [];
-    const groupedPending = groupInstallmentsByPayment(installmentsData.pending, allExpenses);
-    const groupedOverdue = groupInstallmentsByPayment(installmentsData.overdue, allExpenses);
-
-    return (
-      <div className="installments-view">
-        <h2>Credit Installments</h2>
-        <div className="installments-header">
-          <button onClick={handleAddCreditCard} className="btn-secondary">Add Credit Card</button>
-          <div className="installments-summary">
-            <span>Pending: {formatCurrency(installmentsData.totalPending)}</span>
-            <span className="overdue">Overdue: {formatCurrency(installmentsData.totalOverdue)}</span>
-          </div>
-        </div>
-
-        {/* Overdue Installments Grouped by Payment */}
-        {Object.keys(groupedOverdue).length > 0 && (
-          <div className="overdue-section">
-            <h3>Overdue Installments</h3>
-            {Object.entries(groupedOverdue).map(([paymentFor, rows]) => (
-              <div key={paymentFor} className="installment-group">
-                <h4>{paymentFor}</h4>
-                {rows.map(installment => (
-                  <div key={installment.id} className="installment-item overdue">
-                    <span className="amount">{formatCurrency(installment.amount)}</span>
-                    <span className="due-date">Due: {installment.dueDate}</span>
-                    <span className="installment-info">
-                      {installment.installmentNumber}/{installment.totalInstallments}
-                    </span>
-                    <span className="card-id">Card: {installment.cardId}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Pending Installments Grouped by Payment */}
-        {Object.keys(groupedPending).length > 0 && (
-          <div className="pending-section">
-            <h3>Upcoming Installments</h3>
-            {Object.entries(groupedPending).map(([paymentFor, rows]) => (
-              <div key={paymentFor} className="installment-group">
-                <h4>{paymentFor}</h4>
-                {rows.map(installment => (
-                  <div key={installment.id} className="installment-item">
-                    <span className="amount">{formatCurrency(installment.amount)}</span>
-                    <span className="due-date">Due: {installment.dueDate}</span>
-                    <span className="installment-info">
-                      {installment.installmentNumber}/{installment.totalInstallments}
-                    </span>
-                    <span className="card-id">Card: {installment.cardId}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const handleNavigate = (view) => {
-    setActiveView(view);
-  };
-
-  const handleDataChanged = () => {
-    loadData();
-  };
-
-  const renderAddExpenseView = () => (
-    <AddExpense 
-      uid={uid} 
-      selectedDate={selectedDate}
-      onNavigate={handleNavigate}
-      onDataChanged={handleDataChanged}
-    />
-  );
-
-  const renderSidebar = () => (
-    <div className="sidebar">
-      <div className="sidebar-header">
-        <h3>Select Date to Add Expense</h3>
-        <button
-          className="calendar-toggle-btn"
-          onClick={() => setCalendarOpen(!calendarOpen)}
-          aria-label={calendarOpen ? 'Hide calendar' : 'Show calendar'}
-        >
-          {calendarOpen ? '−' : '+'}
-        </button>
-      </div>
-      {calendarOpen && (
-        <div className="calendar-section sidebar-calendar">
-          <div className="calendar-header">
-            <button onClick={handlePrevMonth} className="calendar-nav">←</button>
-            <h3>{currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
-            <button onClick={handleNextMonth} className="calendar-nav">→</button>
-          </div>
-          <div className="calendar-weekdays">
-            <div>Sun</div>
-            <div>Mon</div>
-            <div>Tue</div>
-            <div>Wed</div>
-            <div>Thu</div>
-            <div>Fri</div>
-            <div>Sat</div>
-          </div>
-          <div className="calendar-days">
-            {renderCalendar()}
+      
+      {/* Inline Expense Form Popup */}
+      {expenseFormOpen && (
+        <div className="expense-form-overlay" onClick={(e) => {
+          if (e.target.className === 'expense-form-overlay') {
+            setExpenseFormOpen(false);
+          }
+        }}>
+          <div className="expense-form-popup">
+            <button 
+              className="close-btn"
+              onClick={() => setExpenseFormOpen(false)}
+            >
+              ×
+            </button>
+            <AddExpense 
+              uid={uid} 
+              selectedDate={selectedDate}
+              creditCards={creditCards}
+              installmentPlans={allExpenses.filter(e => e.creditData && e.creditData.isInstallment)}
+              expenseToEdit={editingExpense}
+              prefillPayment={prefillPayment}
+              onNavigate={() => { setExpenseFormOpen(false); setEditingExpense(null); setPrefillPayment(null); }}
+              onDataChanged={() => {
+                loadData();
+                setExpenseFormOpen(false);
+                setEditingExpense(null);
+                setPrefillPayment(null);
+              }}
+            />
           </div>
         </div>
       )}
     </div>
   );
 
+
+
+
+
+
+  const renderInstallmentsView = () => {
+    return (
+      <InstallmentsView 
+        creditCards={creditCards}
+        allExpenses={allExpenses}
+        installmentsData={installmentsData}
+        onAddCreditCard={handleAddCreditCard}
+        onDeleteCreditCard={handleDeleteCreditCard}
+        onMarkInstallmentPaid={handleMarkInstallmentPaid}
+        onAddCardPayment={openAddCardPayment}
+        onDeleteInstallmentPlan={requestDeleteExpense}
+      />
+    );
+  };
+
+  // Removed unused functions handleNavigate and renderAddExpenseView
+
+  // Sidebar removed — inline calendar used in header
+
   if (loading) {
-    return <div className="loading">Loading...</div>;
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <p>Loading...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="expense-tracker with-sidebar">
-      {/* Left Sidebar with Calendar */}
-      {renderSidebar()}
-      
-      {/* Main Content Area */}
+    <div className="expense-tracker">
       <div className="main-content">
         {/* View Tabs */}
         <div className="view-tabs">
@@ -499,12 +637,6 @@ const ExpenseTracker = ({ uid }) => {
             onClick={() => setActiveView("home")}
           >
             Home
-          </button>
-          <button 
-            className={activeView === "addExpense" ? "tab active" : "tab"}
-            onClick={() => setActiveView("addExpense")}
-          >
-            Add Expense
           </button>
           <button 
             className={activeView === "installments" ? "tab active" : "tab"}
@@ -516,9 +648,28 @@ const ExpenseTracker = ({ uid }) => {
 
         <div className="view-content">
           {activeView === "home" && renderHomeView()}
-          {activeView === "addExpense" && renderAddExpenseView()}
           {activeView === "installments" && renderInstallmentsView()}
         </div>
+
+        {/* Delete confirmation modal - outside view content so it shows on any tab */}
+        {pendingDeleteExpense && (
+          <div className="confirm-overlay" onClick={(e) => { if (e.target.className === 'confirm-overlay') cancelDelete(); }}>
+                <div className="confirm-popup">
+                  <h3>Confirm Delete</h3>
+                  <p>
+                    Delete expense <strong>{pendingDeleteExpense.note || pendingDeleteExpense.category || 'this expense'}</strong>
+                    {pendingDeleteExpense.amount ? ` of ${formatCurrency(pendingDeleteExpense.amount)}` : ''}?
+                    This will also remove related installments.
+                  </p>
+                  <div className="confirm-actions">
+                    <button className="btn btn-danger" onClick={() => handleDeleteExpense(pendingDeleteExpense.id)}>
+                      Delete
+                    </button>
+                    <button className="btn btn-secondary" onClick={cancelDelete}>Cancel</button>
+                  </div>
+                </div>
+          </div>
+        )}
       </div>
     </div>
   );
