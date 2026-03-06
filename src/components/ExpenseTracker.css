@@ -52,9 +52,16 @@
 }
 
 .expense-tracker {
-  max-width: 1200px;
+  width: 100%;
+  max-width: 100%;
   margin: 0 auto;
   padding: 20px;
+  box-sizing: border-box;
+}
+
+.expense-tracker.full-width {
+  max-width: 100%;
+  padding: 20px 30px;
 }
 
 /* Sidebar Layout */
@@ -319,21 +326,21 @@
 /* View Tabs */
 .view-tabs {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 20px;
   border-bottom: 2px solid #e0e0e0;
 }
 
 .tab {
-  padding: 12px 24px;
+  padding: 10px 20px;
   background: none;
   border: none;
-  border-radius: 8px 8px 0 0;
+  border-radius: 6px 6px 0 0;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   color: #666;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 .tab.active {
@@ -362,7 +369,7 @@
 /* Home View */
 .home-view {
   display: grid;
-  gap: 30px;
+  gap: 20px;
 }
 
 
@@ -504,28 +511,34 @@
 .today-section,
 .monthly-section {
   background: white;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: none;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 20px;
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .section-header h2 {
   margin: 0;
-  color: #333;
-  font-size: 24px;
+  color: #222;
+  font-size: 17px;
+  font-weight: 700;
 }
 
 .today-expenses h3 {
-  margin: 20px 0 16px 0;
-  color: #333;
-  font-size: 18px;
+  margin: 16px 0 12px 0;
+  color: #222;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .expenses-list-compact {
@@ -537,16 +550,16 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  border-radius: 6px;
+  margin-bottom: 6px;
   background: white;
-  transition: box-shadow 0.3s ease;
+  transition: box-shadow 0.2s ease;
 }
 
 .expense-item-compact:hover {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
 
 .expense-details-compact {
@@ -666,10 +679,12 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 16px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
   background: #f8f9fa;
-  border-radius: 8px;
+  border-radius: 6px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .target-info {
@@ -695,11 +710,12 @@
 }
 
 .totals span {
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: white;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px solid #e0e0e0;
   font-weight: 500;
+  font-size: 13px;
 }
 
 .totals .total {
@@ -715,29 +731,31 @@
 }
 
 .btn-primary {
-  background: #007bff;
+  background: #a855f7;
   color: white;
   border: none;
-  padding: 10px 20px;
-  border-radius: 6px;
+  padding: 8px 18px;
+  border-radius: 4px;
   cursor: pointer;
-  font-weight: 500;
-  transition: background 0.3s ease;
+  font-weight: 600;
+  font-size: 13px;
+  transition: background 0.2s ease;
 }
 
 .btn-primary:hover {
-  background: #0056b3;
+  background: #9333ea;
 }
 
 .btn-secondary {
   background: #6c757d;
   color: white;
   border: none;
-  padding: 10px 20px;
-  border-radius: 6px;
+  padding: 8px 18px;
+  border-radius: 4px;
   cursor: pointer;
-  font-weight: 500;
-  transition: background 0.3s ease;
+  font-weight: 600;
+  font-size: 13px;
+  transition: background 0.2s ease;
 }
 
 .btn-secondary:hover {
@@ -829,20 +847,20 @@
 .total-card {
   background: linear-gradient(135deg, #007bff, #0056b3);
   color: white;
-  padding: 24px;
-  border-radius: 12px;
+  padding: 20px;
+  border-radius: 6px;
   text-align: center;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .total-card h3 {
-  margin: 0 0 8px 0;
-  font-size: 16px;
+  margin: 0 0 6px 0;
+  font-size: 14px;
   opacity: 0.9;
 }
 
 .total-card .amount {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 600;
 }
 
@@ -1111,22 +1129,24 @@
 /* Responsive Design */
 @media (max-width: 768px) {
   .expense-tracker {
-    padding: 10px;
+    padding: 12px;
   }
 
   .daily-stats {
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     align-items: stretch;
   }
 
   .totals {
-    justify-content: space-around;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .monthly-content {
     grid-template-columns: 1fr;
-    gap: 20px;
+    gap: 16px;
   }
 
   .chart-container {
@@ -1135,8 +1155,13 @@
 
   .section-header {
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     align-items: stretch;
+  }
+
+  .action-buttons {
+    flex-wrap: wrap;
+    justify-content: center;
   }
 
   .expense-details-compact {
@@ -1146,7 +1171,7 @@
 
   .installments-header {
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     align-items: stretch;
   }
 
@@ -1157,33 +1182,54 @@
 
 @media (max-width: 480px) {
   .view-tabs {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
   }
 
   .tab {
-    flex: 1;
-    min-width: 100px;
+    flex: none;
+    min-width: auto;
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
   }
 
   .expense-item {
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     align-items: stretch;
   }
 
   .expense-details {
     justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .action-buttons {
+    gap: 6px;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    padding: 8px 12px;
+    font-size: 12px;
   }
 }
 
 /* Specific tweaks for very small screens (iPhone widths) */
 @media (max-width: 420px) {
-  .selected-date-banner { padding: 12px 10px; }
-  .selected-date-banner h3 { font-size: 15px; }
+  .selected-date-banner { padding: 10px 12px; }
+  .selected-date-banner h3 { font-size: 14px; }
   .monthly-content { grid-template-columns: 1fr; }
-  .chart-container { height: 200px; }
-  .confirm-popup { width: calc(100% - 24px); max-width: none; padding: 18px; border-radius: 10px; }
-  .confirm-popup h3 { font-size: 18px; }
-  .confirm-actions { flex-direction: column; gap: 10px; }
+  .chart-container { height: 180px; }
+  .confirm-popup { width: calc(100% - 24px); max-width: none; padding: 16px; border-radius: 8px; }
+  .confirm-popup h3 { font-size: 16px; }
+  .confirm-actions { flex-direction: column; gap: 8px; }
   .btn-danger { width: 100%; }
+  .totals { gap: 6px; }
+  .totals span { padding: 5px 8px; font-size: 12px; }
+  .section-header h2 { font-size: 15px; }
 }

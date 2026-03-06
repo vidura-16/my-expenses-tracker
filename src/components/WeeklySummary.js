@@ -10,6 +10,12 @@ const WeeklySummary = ({ weeklyData, onDeleteExpense, onEditExpense }) => {
       food: '#FF6384',
       travel: '#36A2EB', 
       utility: '#FFCE56',
+      koko: '#FF9F43',
+      groceries: '#2ED573',
+      petrol: '#A29BFE',
+      clothes: '#FD79A8',
+      health: '#00B894',
+      home: '#5F27CD',
       other: '#4BC0C0'
     };
     return colors[category] || '#007bff';

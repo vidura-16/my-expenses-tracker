@@ -1,15 +1,22 @@
 import React, { useState, useEffect } from "react";
 import { addExpense, updateExpense, payInstallment, getInstallmentsForExpense } from "../utils/expenseUtils";
+import { updatePortionSpent } from "../utils/budgetUtils";
 import "../styles/AddExpense.css";
 
 const CATEGORIES = [
   "food",
   "travel", 
   "utility",
+  "koko",
+  "groceries",
+  "petrol",
+  "clothes",
+  "health",
+  "home",
   "other"
 ];
 
-function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards = [], installmentPlans = [], expenseToEdit = null, prefillPayment = null }) {
+function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards = [], installmentPlans = [], expenseToEdit = null, prefillPayment = null, budgetPortions = [] }) {
   const [formData, setFormData] = useState({
     amount: "",
     category: "food",
@@ -20,7 +27,8 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
     isInstallment: false,
     installmentMonths: 3,
     cardId: "",
-    applyToExpenseId: ""
+    applyToExpenseId: "",
+    budgetPortionId: ""
   });
   const [installmentNumber, setInstallmentNumber] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,8 +66,14 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
         note: expenseToEdit.note || "",
         isInstallment: !!(expenseToEdit.creditData && expenseToEdit.creditData.isInstallment),
         installmentMonths: expenseToEdit.creditData ? expenseToEdit.creditData.totalInstallments || 3 : 3,
-        cardId: expenseToEdit.creditData ? (expenseToEdit.creditData.cardId || "") : ""
+        cardId: expenseToEdit.creditData ? (expenseToEdit.creditData.cardId || "") : "",
+        applyToExpenseId: expenseToEdit.paymentForExpenseId || "",
+        budgetPortionId: expenseToEdit.budgetPortionId || ""
       });
+      // If editing an installment payment, prefill the installment number
+      if (expenseToEdit.appliedInstallmentNumber) {
+        setInstallmentNumber(String(expenseToEdit.appliedInstallmentNumber));
+      }
     }
   }, [expenseToEdit, selectedDate]);
 
@@ -91,10 +105,12 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
     }
   }, [formData.applyToExpenseId, installmentPlans]);
 
-  // Auto-fill installment number (next unpaid) when a plan is selected
+  // Auto-fill installment number (next unpaid) when a plan is selected - ONLY for new payments
   useEffect(() => {
     let mounted = true;
     const fetchNext = async () => {
+      // Skip auto-fill if editing an existing expense
+      if (expenseToEdit) return;
       if (!formData.applyToExpenseId) return;
       try {
         const insts = await getInstallmentsForExpense(uid, formData.applyToExpenseId);
@@ -112,7 +128,7 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
     };
     fetchNext();
     return () => { mounted = false; };
-  }, [formData.applyToExpenseId, uid]);
+  }, [formData.applyToExpenseId, uid, expenseToEdit]);
 
   const handleSave = async (goHome = false) => {
     try {
@@ -139,8 +155,8 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
         amount: parseFloat(formData.amount)
       };
 
-      if (formData.applyToExpenseId) {
-        // Paying an existing installment plan: create payment expense and mark specified or next unpaid installment paid
+      if (formData.applyToExpenseId && !expenseToEdit) {
+        // NEW card payment: Paying an existing installment plan
         // Force this payment to be recorded as an 'other' expense in category 'installment' so it doesn't affect daily target
         await payInstallment(uid, formData.applyToExpenseId, {
           amount: expenseData.amount,
@@ -148,16 +164,74 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
           type: 'other',
           date: expenseData.date,
           note: expenseData.note,
+          budgetPortionId: formData.budgetPortionId || null,
           installmentNumber: installmentNumber ? parseInt(installmentNumber) : undefined
         });
+        
+        // If a budget portion is selected, update its spent amount
+        if (formData.budgetPortionId) {
+          const [year, month] = formData.date.split('-');
+          const monthYear = `${year}-${month}`;
+          await updatePortionSpent(uid, monthYear, formData.budgetPortionId, expenseData.amount);
+        }
       } else if (expenseToEdit && expenseToEdit.id) {
-        // Check if expense still exists before updating
+        // EDITING an existing expense (could be regular or installment payment)
         try {
-          await updateExpense(uid, expenseToEdit.id, expenseData);
+          // Build updated expense data
+          const updateData = {
+            amount: expenseData.amount,
+            date: expenseData.date,
+            note: expenseData.note,
+            budgetPortionId: formData.budgetPortionId || null
+          };
+          
+          // If it's an installment payment, keep the payment-specific fields
+          if (expenseToEdit.paymentForExpenseId) {
+            updateData.category = 'installment';
+            updateData.type = 'other';
+            updateData.paymentType = 'credit';
+            updateData.paymentForExpenseId = expenseToEdit.paymentForExpenseId;
+            updateData.appliedInstallmentNumber = expenseToEdit.appliedInstallmentNumber;
+          } else {
+            // Regular expense - use form data
+            updateData.category = expenseData.category;
+            updateData.type = expenseData.type;
+            updateData.paymentType = expenseData.paymentType;
+          }
+          
+          await updateExpense(uid, expenseToEdit.id, updateData);
+          
+          // Handle budget portion updates on edit
+          const [year, month] = formData.date.split('-');
+          const monthYear = `${year}-${month}`;
+          const oldPortionId = expenseToEdit.budgetPortionId || null;
+          const newPortionId = formData.budgetPortionId || null;
+          
+          // If portion changed, update spent amounts
+          if (oldPortionId !== newPortionId) {
+            // Decrement old portion's spent (if any)
+            if (oldPortionId) {
+              await updatePortionSpent(uid, monthYear, oldPortionId, -expenseToEdit.amount);
+            }
+            // Increment new portion's spent (if any)
+            if (newPortionId) {
+              await updatePortionSpent(uid, monthYear, newPortionId, expenseData.amount);
+            }
+          } else if (newPortionId && expenseToEdit.amount !== expenseData.amount) {
+            // Same portion but amount changed - update the difference
+            const diff = expenseData.amount - expenseToEdit.amount;
+            await updatePortionSpent(uid, monthYear, newPortionId, diff);
+          }
         } catch (updateError) {
           if (updateError.message && updateError.message.includes('No document to update')) {
             // Expense was deleted, create as new expense instead
             await addExpense(uid, expenseData);
+            // If a budget portion is selected, update its spent amount
+            if (formData.budgetPortionId) {
+              const [year, month] = formData.date.split('-');
+              const monthYear = `${year}-${month}`;
+              await updatePortionSpent(uid, monthYear, formData.budgetPortionId, expenseData.amount);
+            }
           } else {
             throw updateError;
           }
@@ -165,6 +239,13 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
       } else {
         // Regular add expense (may create installments if isInstallment)
         await addExpense(uid, expenseData);
+        
+        // If a budget portion is selected, update its spent amount
+        if (formData.budgetPortionId) {
+          const [year, month] = formData.date.split('-');
+          const monthYear = `${year}-${month}`;
+          await updatePortionSpent(uid, monthYear, formData.budgetPortionId, expenseData.amount);
+        }
       }
 
       if (onDataChanged) onDataChanged();
@@ -183,7 +264,8 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
           isInstallment: false,
           installmentMonths: 3,
           cardId: "",
-          applyToExpenseId: ""
+          applyToExpenseId: "",
+          budgetPortionId: ""
         });
       }
     } catch (err) {
@@ -197,12 +279,12 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
   return (
     <div className="add-expense-container">
       <div className="header">
-        <h1>{prefillPayment && !expenseToEdit ? 'Add Card Payment' : 'Add Expense'}</h1>
+        <h1>{(prefillPayment && !expenseToEdit) || (expenseToEdit && expenseToEdit.paymentForExpenseId) ? 'Card Payment' : 'Add Expense'}</h1>
         <p className="selected-date">Date: {new Date(formData.date).toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
       </div>
       {error && <div className="error-message">{error}</div>}
-      {/* If opened specifically for Add Card Payment, render a simplified form */}
-      {prefillPayment && !expenseToEdit ? (
+      {/* If opened specifically for Add Card Payment OR editing an installment payment, render the card payment form */}
+      {(prefillPayment && !expenseToEdit) || (expenseToEdit && expenseToEdit.paymentForExpenseId) ? (
         <>
           <div className="form-group">
             <label htmlFor="applyToExpenseId">Select Installment Plan</label>
@@ -211,6 +293,7 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
               value={formData.applyToExpenseId}
               onChange={(e) => setFormData({...formData, applyToExpenseId: e.target.value})}
               className="input-field"
+              disabled={!!expenseToEdit} // Don't allow changing plan when editing
             >
               <option value="">-- Select existing plan --</option>
               {installmentPlans && installmentPlans
@@ -261,10 +344,43 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
               onChange={(e) => setInstallmentNumber(e.target.value)}
               className="input-field"
             />
-            <p className="help-text">If left empty, the next unpaid installment will be marked paid.</p>
+            <p className="help-text">{expenseToEdit ? 'Change which installment this payment is for.' : 'If left empty, the next unpaid installment will be marked paid.'}</p>
           </div>
 
-          {/* card summary removed — plan selection is sufficient */}
+          {/* Budget Portion Selector for Card Payments */}
+          {budgetPortions && budgetPortions.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="budgetPortionId">Budget Portion (Optional)</label>
+              <select
+                id="budgetPortionId"
+                value={formData.budgetPortionId}
+                onChange={(e) => setFormData({...formData, budgetPortionId: e.target.value})}
+                className="input-field"
+              >
+                <option value="">-- No portion --</option>
+                {budgetPortions.map(portion => {
+                  const spent = portion.calculatedSpent ?? 0;
+                  const remaining = portion.allocated - spent;
+                  return (
+                    <option key={portion.id} value={portion.id}>
+                      {portion.name} (Rs. {remaining.toFixed(2)} remaining)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label htmlFor="note">Note (Optional)</label>
+            <textarea
+              id="note"
+              placeholder="Add a note"
+              value={formData.note}
+              onChange={(e) => setFormData({...formData, note: e.target.value})}
+              className="input-field textarea-field"
+            />
+          </div>
         </>
       ) : (
         <>
@@ -288,7 +404,7 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
       )}
 
 
-      {!(prefillPayment && !expenseToEdit) && (
+      {!((prefillPayment && !expenseToEdit) || (expenseToEdit && expenseToEdit.paymentForExpenseId)) && (
         <>
           <div className="form-group">
             <label htmlFor="category">Category</label>
@@ -370,39 +486,7 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
                   <label htmlFor="isInstallment" className="checkbox-label">This is an installment payment</label>
                 </div>
               </div>
-              <div className="form-group">
-                <label htmlFor="applyToExpenseId">Apply to existing installment plan (optional)</label>
-                <select
-                  id="applyToExpenseId"
-                  value={formData.applyToExpenseId}
-                  onChange={(e) => setFormData({...formData, applyToExpenseId: e.target.value})}
-                  className="input-field"
-                >
-                  <option value="">-- New expense / new plan --</option>
-                  {installmentPlans && installmentPlans
-                    .filter(p => p.creditData && p.creditData.cardId === formData.cardId)
-                    .map(p => (
-                      <option key={p.id} value={p.id}>{p.note || 'Installment'} • {p.category} • {p.date}</option>
-                    ))}
-                </select>
-                <p className="help-text">Select an existing plan to record a monthly payment against it.</p>
-              </div>
 
-              {formData.applyToExpenseId && (
-                <div className="form-group">
-                  <label htmlFor="installmentNumber">Installment Number (optional)</label>
-                  <input
-                    id="installmentNumber"
-                    type="number"
-                    min="1"
-                    placeholder="e.g., 2"
-                    value={installmentNumber}
-                    onChange={(e) => setInstallmentNumber(e.target.value)}
-                    className="input-field"
-                  />
-                  <p className="help-text">If left empty, the next unpaid installment will be marked paid.</p>
-                </div>
-              )}
               
               {formData.isInstallment && (
                 <div className="form-group">
@@ -424,20 +508,48 @@ function AddExpense({ uid, selectedDate, onNavigate, onDataChanged, creditCards 
               )}
             </>
           )}
+
+          {/* Budget Portion selector */}
+          {budgetPortions && budgetPortions.length > 0 && (
+            <div className="form-group">
+              <label htmlFor="budgetPortionId">Budget Portion (Optional)</label>
+              <select
+                id="budgetPortionId"
+                value={formData.budgetPortionId}
+                onChange={(e) => setFormData({...formData, budgetPortionId: e.target.value})}
+                className="input-field"
+              >
+                <option value="">-- No portion --</option>
+                {budgetPortions.map(portion => {
+                  const spent = portion.calculatedSpent ?? 0;
+                  const remaining = portion.allocated - spent;
+                  return (
+                    <option key={portion.id} value={portion.id}>
+                      {portion.name} (Rs. {remaining.toFixed(2)} remaining)
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="help-text">Link this expense to a budget portion from Plan Budget</p>
+            </div>
+          )}
         </>
       )}
 
-      <div className="form-group">
-        <label htmlFor="note">Note (Optional)</label>
-        <textarea
-          id="note"
-          placeholder="Add a note"
-          value={formData.note}
-          onChange={(e) => setFormData({...formData, note: e.target.value})}
-          className="input-field textarea"
-          rows="4"
-        ></textarea>
-      </div>
+      {/* Note field for regular expenses only - card payment has its own note field above */}
+      {!((prefillPayment && !expenseToEdit) || (expenseToEdit && expenseToEdit.paymentForExpenseId)) && (
+        <div className="form-group">
+          <label htmlFor="note">Note (Optional)</label>
+          <textarea
+            id="note"
+            placeholder="Add a note"
+            value={formData.note}
+            onChange={(e) => setFormData({...formData, note: e.target.value})}
+            className="input-field textarea"
+            rows="4"
+          ></textarea>
+        </div>
+      )}
 
       <div className="button-group">
         <button

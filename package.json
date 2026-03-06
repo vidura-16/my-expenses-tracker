@@ -10,6 +10,7 @@
     "chart.js": "^4.5.1",
     "firebase": "^12.3.0",
     "firebase-admin": "^13.6.0",
+    "jspdf": "^4.2.0",
     "react": "^19.2.0",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.0",
@@ -39,5 +40,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "baseline-browser-mapping": "^2.10.0"
   }
 }

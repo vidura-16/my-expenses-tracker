@@ -134,6 +134,28 @@ const InstallmentsView = ({
 
   const cardGroups = groupInstallmentsByCard();
 
+  // Find installment plans that don't appear in any card's plans list
+  const getOrphanedInstallmentPlans = () => {
+    const installmentExpenses = allExpenses.filter(exp => exp.creditData && exp.creditData.isInstallment);
+    
+    // Get all expense IDs that are already shown under cards
+    const shownExpenseIds = new Set();
+    Object.values(cardGroups).forEach(group => {
+      group.plans.forEach(plan => {
+        if (plan.expense && plan.expense.id) {
+          shownExpenseIds.add(plan.expense.id);
+        }
+      });
+    });
+    
+    // Find installment expenses that are NOT shown anywhere
+    const orphaned = installmentExpenses.filter(expense => !shownExpenseIds.has(expense.id));
+    
+    return orphaned;
+  };
+
+  const orphanedPlans = getOrphanedInstallmentPlans();
+
   return (
     <div className="installments-container">
       <div className="installments-header">
@@ -265,6 +287,42 @@ const InstallmentsView = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Orphaned Installment Plans - plans not showing under any card */}
+      {orphanedPlans.length > 0 && (
+        <div className="unassigned-section">
+          <h3>Orphaned Installment Plans</h3>
+          <p className="unassigned-info">
+            These installment plans have missing installment records or are not linked to any credit card. 
+            You can delete them and re-create them properly.
+          </p>
+          <div className="unassigned-plans-list">
+            {orphanedPlans.map((expense, idx) => (
+              <div key={expense.id || idx} className="unassigned-plan-item">
+                <div className="plan-details">
+                  <span className="plan-name">{expense.note || 'Installment Plan'}</span>
+                  <span className="plan-meta">
+                    {expense.category} • {formatDate(expense.date)} • {expense.creditData?.totalInstallments || 0} months
+                  </span>
+                  <span className="plan-amount">{formatCurrency(expense.amount)}</span>
+                  <span className="plan-card-id">Card ID: {expense.creditData?.cardId || 'none'}</span>
+                </div>
+                <div className="plan-actions">
+                  {onDeleteInstallmentPlan && (
+                    <button 
+                      type="button"
+                      className="btn btn-danger btn-small"
+                      onClick={() => onDeleteInstallmentPlan(expense)}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

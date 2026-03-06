@@ -16,9 +16,11 @@ import {
   getDailyTarget,
   setDailyTarget
 } from "../utils/expenseUtils";
+import { getPortions, getBudgetExpenses } from "../utils/budgetUtils";
 import AddExpense from "../screens/AddExpense";
 import WeeklySummary from "./WeeklySummary";
 import InstallmentsView from "./InstallmentsView";
+import BudgetPlanner from "./BudgetPlanner";
 import "./ExpenseTracker.css";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
@@ -40,6 +42,7 @@ const ExpenseTracker = ({ uid }) => {
   const [allExpenses, setAllExpenses] = useState([]);
   const [creditCards, setCreditCards] = useState([]);
   const [dailyTarget, setDailyTargetState] = useState(null);
+  const [budgetPortions, setBudgetPortions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -50,7 +53,10 @@ const ExpenseTracker = ({ uid }) => {
       const selYear = parseInt(selYearStr, 10);
       const selMonthIndex = parseInt(selMonthStr, 10) - 1; // 0-based month index
 
-      const [today, monthly, installments, expenses, monthlyExpensesData, allExpensesData, cards, target] = await Promise.all([
+      // Get monthYear string for portions
+      const monthYear = `${selYear}-${String(selMonthIndex + 1).padStart(2, '0')}`;
+
+      const [today, monthly, installments, expenses, monthlyExpensesData, allExpensesData, cards, target, portions, budgetExpensesData] = await Promise.all([
         getTodayTotal(uid, selectedDate),
         getMonthlyTotal(uid, selYear, selMonthIndex),
         getInstallmentsSummary(uid),
@@ -58,7 +64,9 @@ const ExpenseTracker = ({ uid }) => {
         getMonthlyExpenses(uid, selYear, selMonthIndex),
         getExpenses(uid), // fetch all expenses, no date filter
         getCreditCards(uid),
-        getDailyTarget(uid, selectedDate)
+        getDailyTarget(uid, selectedDate),
+        getPortions(uid, monthYear),
+        getBudgetExpenses(uid, monthYear)
       ]);
 
       setTodayData(today);
@@ -69,6 +77,25 @@ const ExpenseTracker = ({ uid }) => {
       setAllExpenses(allExpensesData);
       setCreditCards(cards);
       setDailyTargetState(target);
+      
+      // Calculate actual spent for each portion based on:
+      // 1. Home expenses linked to this portion (from monthlyExpensesData)
+      // 2. Budget expenses marked as paid (from budgetExpensesData)
+      const portionsWithCalculatedSpent = (portions || []).map(portion => {
+        // Home expenses linked to this portion
+        const linkedHomeExpenses = monthlyExpensesData.filter(exp => exp.budgetPortionId === portion.id);
+        const homeExpensesSpent = linkedHomeExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+        
+        // Budget expenses for this portion that are marked as paid
+        const portionBudgetExpenses = (budgetExpensesData || []).filter(exp => exp.portionId === portion.id && exp.isPaid);
+        const budgetExpensesSpent = portionBudgetExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+        
+        return {
+          ...portion,
+          calculatedSpent: homeExpensesSpent + budgetExpensesSpent
+        };
+      });
+      setBudgetPortions(portionsWithCalculatedSpent);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -205,6 +232,12 @@ const ExpenseTracker = ({ uid }) => {
       food: '#FF6384',
       travel: '#36A2EB', 
       utility: '#FFCE56',
+      koko: '#FF9F43',
+      groceries: '#2ED573',
+      petrol: '#A29BFE',
+      clothes: '#FD79A8',
+      health: '#00B894',
+      home: '#5F27CD',
       other: '#4BC0C0',
       default: '#9966FF'
     };
@@ -263,43 +296,91 @@ const ExpenseTracker = ({ uid }) => {
 
   const groupExpensesByWeek = (expenses) => {
     const weeks = {};
+    // Use selectedDate's month for week boundaries so they match the loaded monthlyExpenses
+    const [selYearStr, selMonthStr] = (selectedDate || new Date().toISOString().split('T')[0]).split('-');
+    const year = parseInt(selYearStr, 10);
+    const monthIndex = parseInt(selMonthStr, 10) - 1;
+    const monthStart = new Date(year, monthIndex, 1);
+    const monthEnd = new Date(year, monthIndex + 1, 0);
     
+    // Generate week boundaries for the month
+    // Find the first Monday of the month or before
+    let currentDate = new Date(monthStart);
+    const dayOfWeek = currentDate.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // 0 = Sunday, so go back 6 days
+    currentDate.setDate(currentDate.getDate() - daysToMonday);
+    
+    const weeksList = [];
+    
+    while (currentDate <= monthEnd) {
+      const weekStart = new Date(currentDate);
+      const weekEnd = new Date(currentDate);
+      weekEnd.setDate(weekEnd.getDate() + 6); // Sunday of the same week
+      
+      // Trim week to month boundaries
+      const trimmedStart = new Date(Math.max(weekStart.getTime(), monthStart.getTime()));
+      const trimmedEnd = new Date(Math.min(weekEnd.getTime(), monthEnd.getTime()));
+      
+      const trimmedStartStr = trimmedStart.toISOString().split('T')[0];
+      const trimmedEndStr = trimmedEnd.toISOString().split('T')[0];
+      
+      weeksList.push({
+        key: trimmedStartStr,
+        start: trimmedStartStr,
+        end: trimmedEndStr,
+        label: `${trimmedStart.toLocaleDateString('default', { month: 'short', day: 'numeric' })} – ${trimmedEnd.toLocaleDateString('default', { month: 'short', day: 'numeric' })}`
+      });
+      
+      currentDate.setDate(currentDate.getDate() + 7);
+    }
+    
+    // Group expenses into these week boundaries
     expenses.forEach(expense => {
-      const weekInfo = getWeekKey(expense.date);
-      const weekKey = weekInfo.key;
+      const expenseDate = new Date(expense.date);
       
-      if (!weeks[weekKey]) {
-        weeks[weekKey] = {
-          ...weekInfo,
-          total: 0,
-          days: {}
-        };
+      for (let week of weeksList) {
+        const weekStart = new Date(week.start);
+        const weekEnd = new Date(week.end);
+        
+        if (expenseDate >= weekStart && expenseDate <= weekEnd) {
+          const weekKey = week.key;
+          
+          if (!weeks[weekKey]) {
+            weeks[weekKey] = {
+              ...week,
+              total: 0,
+              days: {}
+            };
+          }
+          
+          weeks[weekKey].total += expense.amount;
+          
+          // Group by day within the week
+          const dayKey = expense.date;
+          if (!weeks[weekKey].days[dayKey]) {
+            weeks[weekKey].days[dayKey] = {
+              date: expense.date,
+              total: 0,
+              expenses: []
+            };
+          }
+          
+          weeks[weekKey].days[dayKey].total += expense.amount;
+          weeks[weekKey].days[dayKey].expenses.push(expense);
+          
+          break; // Expense belongs to only one week
+        }
       }
-      
-      weeks[weekKey].total += expense.amount;
-      
-      // Group by day within the week
-      const dayKey = expense.date;
-      if (!weeks[weekKey].days[dayKey]) {
-        weeks[weekKey].days[dayKey] = {
-          date: expense.date,
-          total: 0,
-          expenses: []
-        };
-      }
-      
-      weeks[weekKey].days[dayKey].total += expense.amount;
-      weeks[weekKey].days[dayKey].expenses.push(expense);
     });
     
-    // Sort weeks by date (newest first) and days within weeks
-    return Object.keys(weeks)
-      .sort((a, b) => new Date(b) - new Date(a))
-      .map(weekKey => ({
-        ...weeks[weekKey],
-        days: Object.keys(weeks[weekKey].days)
+    // Return weeks in order they were created (chronological within month)
+    return weeksList
+      .filter(w => weeks[w.key])
+      .map(w => ({
+        ...weeks[w.key],
+        days: Object.keys(weeks[w.key].days)
           .sort((a, b) => new Date(b) - new Date(a))
-          .map(dayKey => weeks[weekKey].days[dayKey])
+          .map(dayKey => weeks[w.key].days[dayKey])
       }));
   };
 
@@ -580,6 +661,7 @@ const ExpenseTracker = ({ uid }) => {
               installmentPlans={allExpenses.filter(e => e.creditData && e.creditData.isInstallment)}
               expenseToEdit={editingExpense}
               prefillPayment={prefillPayment}
+              budgetPortions={budgetPortions}
               onNavigate={() => { setExpenseFormOpen(false); setEditingExpense(null); setPrefillPayment(null); }}
               onDataChanged={() => {
                 loadData();
@@ -593,11 +675,6 @@ const ExpenseTracker = ({ uid }) => {
       )}
     </div>
   );
-
-
-
-
-
 
   const renderInstallmentsView = () => {
     return (
@@ -613,10 +690,10 @@ const ExpenseTracker = ({ uid }) => {
       />
     );
   };
-
-  // Removed unused functions handleNavigate and renderAddExpenseView
-
-  // Sidebar removed — inline calendar used in header
+ 
+  const renderPlanBudgetView = () => {
+    return <BudgetPlanner uid={uid} />;
+  };
 
   if (loading) {
     return (
@@ -628,7 +705,7 @@ const ExpenseTracker = ({ uid }) => {
   }
 
   return (
-    <div className="expense-tracker">
+    <div className={`expense-tracker${activeView === "plan" ? " full-width" : ""}`}>
       <div className="main-content">
         {/* View Tabs */}
         <div className="view-tabs">
@@ -644,11 +721,18 @@ const ExpenseTracker = ({ uid }) => {
           >
             Installments
           </button>
+          <button 
+            className={activeView === "plan" ? "tab active" : "tab"}
+            onClick={() => setActiveView("plan")}
+          >
+            Plan Budget
+          </button>
         </div>
 
         <div className="view-content">
           {activeView === "home" && renderHomeView()}
           {activeView === "installments" && renderInstallmentsView()}
+          {activeView === "plan" && renderPlanBudgetView()}
         </div>
 
         {/* Delete confirmation modal - outside view content so it shows on any tab */}

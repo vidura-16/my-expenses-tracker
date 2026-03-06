@@ -30,7 +30,8 @@ export const addExpense = async (uid, expenseData) => {
       paymentType: expenseData.paymentType || "cash", // cash | debit | credit
       date: expenseData.date || new Date().toISOString().split("T")[0], // YYYY-MM-DD string
       timestamp: serverTimestamp(),
-      note: expenseData.note || ""
+      note: expenseData.note || "",
+      budgetPortionId: expenseData.budgetPortionId || null
     };
 
     // Handle installment data for credit payments
@@ -357,6 +358,7 @@ export const payInstallment = async (uid, expenseId, paymentData = {}) => {
       paymentType: 'credit',
       date: paymentData.date || new Date().toISOString().split('T')[0],
       note: paymentData.note || '',
+      budgetPortionId: paymentData.budgetPortionId || null,
       paymentForExpenseId: expenseId,
       appliedInstallmentNumber: paymentData.installmentNumber || null,
       timestamp: serverTimestamp()
@@ -609,6 +611,7 @@ export const updateExpense = async (uid, expenseId, expenseData) => {
       paymentType: expenseData.paymentType || "cash",
       date: expenseData.date || new Date().toISOString().split("T")[0],
       note: expenseData.note || "",
+      budgetPortionId: expenseData.budgetPortionId || null,
       timestamp: serverTimestamp()
     };
 
@@ -636,6 +639,21 @@ export const updateExpense = async (uid, expenseId, expenseData) => {
 
     await updateDoc(expenseRef, updated);
 
+    // Preserve paid status of existing installments before recreating
+    let existingPaidMap = {};
+    if (updated.creditData && updated.creditData.isInstallment) {
+      const existingInstallments = await getInstallmentsForExpense(uid, expenseId);
+      existingInstallments.forEach(inst => {
+        if (inst.isPaid) {
+          existingPaidMap[inst.installmentNumber] = {
+            isPaid: true,
+            paidAt: inst.paidAt || null,
+            paidByExpenseId: inst.paidByExpenseId || null
+          };
+        }
+      });
+    }
+
     // Recreate installments: delete old ones first
     await deleteInstallmentsByExpense(uid, expenseId);
 
@@ -646,6 +664,7 @@ export const updateExpense = async (uid, expenseId, expenseData) => {
         const installmentDate = new Date(updated.date || expenseData.date);
         installmentDate.setMonth(installmentDate.getMonth() + i);
         const installmentRef = doc(collection(db, "users", uid, INSTALLMENTS));
+        const paidInfo = existingPaidMap[i];
         batch.set(installmentRef, {
           expenseId: expenseId,
           amount: updated.creditData.monthlyAmount,
@@ -653,7 +672,9 @@ export const updateExpense = async (uid, expenseId, expenseData) => {
           totalInstallments: updated.creditData.totalInstallments,
           dueDate: installmentDate.toISOString().split("T")[0],
           cardId: updated.creditData.cardId,
-          isPaid: false, // No installments are paid by default
+          isPaid: paidInfo ? true : false,
+          paidAt: paidInfo ? paidInfo.paidAt : null,
+          paidByExpenseId: paidInfo ? paidInfo.paidByExpenseId : null,
           timestamp: serverTimestamp()
         });
       }

@@ -175,16 +175,77 @@
 
 @media (max-width: 420px) {
   .add-expense-container {
-    margin: 8px;
-    padding: 12px;
+    margin: 4px;
+    padding: 10px;
     border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
 
-  .header h1 { font-size: 20px; }
-  .selected-date { font-size: 14px; }
+  .header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+  }
 
-  .input-field { font-size: 16px; padding: 12px; }
-  .textarea { min-height: 100px; }
+  .header h1 {
+    font-size: 18px;
+    margin-bottom: 4px;
+  }
 
-  .btn { width: 100%; padding: 14px 12px; font-size: 16px; }
+  .selected-date {
+    font-size: 13px;
+  }
+
+  .form-group {
+    margin-bottom: 14px;
+  }
+
+  .form-group label {
+    font-size: 13px;
+    margin-bottom: 5px;
+  }
+
+  .input-field {
+    font-size: 16px;
+    padding: 10px;
+    border-radius: 6px;
+    border-width: 1.5px;
+  }
+
+  .textarea {
+    min-height: 70px;
+  }
+
+  .checkbox-group {
+    gap: 8px;
+  }
+
+  .checkbox-label {
+    font-size: 14px;
+  }
+
+  .help-text {
+    font-size: 11px;
+    margin-top: 4px;
+  }
+
+  .error-message {
+    padding: 10px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+
+  .button-group {
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .btn {
+    width: 100%;
+    max-width: none;
+    padding: 13px 12px;
+    font-size: 15px;
+    border-radius: 8px;
+    min-width: auto;
+  }
 }
